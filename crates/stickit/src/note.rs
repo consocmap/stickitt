@@ -2024,6 +2024,8 @@ impl Note {
         // AltGr arrives as Ctrl+Alt on Windows and must type text (e.g. '@' on German layouts).
         let primary = if cfg!(target_os = "macos") { m.super_key() } else { m.control_key() && !m.alt_key() };
         let word = if cfg!(target_os = "macos") { m.alt_key() } else { m.control_key() };
+        // macOS text conventions: ⌘ with ←/→/⌫/⌦ works on the whole line, ⌘ with ↑/↓ on the note.
+        let line = cfg!(target_os = "macos") && m.super_key();
         let shift = m.shift_key();
 
         if !matches!(
@@ -2054,6 +2056,8 @@ impl Note {
                                 r.end
                             }
                         }
+                        _ if left && line => doc.line_bounds(doc.cursor).0,
+                        _ if line => doc.line_bounds(doc.cursor).1,
                         _ if left && word => doc.prev_word(doc.cursor),
                         _ if left => doc.prev_grapheme(doc.cursor),
                         _ if word => doc.next_word(doc.cursor),
@@ -2061,6 +2065,8 @@ impl Note {
                     };
                     doc.move_to(to, shift);
                 }
+                NamedKey::ArrowUp if line => doc.move_to(0, shift),
+                NamedKey::ArrowDown if line => doc.move_to(doc.text.len(), shift),
                 NamedKey::ArrowUp => self.vertical(&mut shared.fonts, -1.0, 1.0, shift),
                 NamedKey::ArrowDown => self.vertical(&mut shared.fonts, 1.0, 1.0, shift),
                 NamedKey::PageUp | NamedKey::PageDown => {
@@ -2074,6 +2080,22 @@ impl Note {
                 NamedKey::End => {
                     let to = if primary { doc.text.len() } else { doc.line_bounds(doc.cursor).1 };
                     doc.move_to(to, shift);
+                }
+                NamedKey::Backspace if line && doc.selection().is_none() => {
+                    let (ls, _) = doc.line_bounds(doc.cursor);
+                    // At the very start of a line, ⌘⌫ joins it with the line above, like ⌫.
+                    let from = if ls == doc.cursor { doc.prev_grapheme(doc.cursor) } else { ls };
+                    let to = doc.cursor;
+                    doc.replace(from..to, "", crate::editor::EditKind::Deleting);
+                    text_changed = true;
+                }
+                NamedKey::Delete if line && doc.selection().is_none() => {
+                    let (_, le) = doc.line_bounds(doc.cursor);
+                    let at = doc.cursor;
+                    let to = if le == at { doc.next_grapheme(at) } else { le };
+                    doc.replace(at..to, "", crate::editor::EditKind::Deleting);
+                    doc.cursor = at;
+                    text_changed = true;
                 }
                 NamedKey::Backspace => {
                     doc.backspace(word);
