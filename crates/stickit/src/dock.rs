@@ -1618,7 +1618,8 @@ impl Dock {
         let body_clip = Clip { x0: 0, y0: body.1 as i32, x1: width as i32, y1: (body.1 + body.3) as i32 };
 
         // Everything to draw: (shadowed card rect, alpha), vector shapes, text.
-        let mut cards: Vec<(Rect, f32, f32, bool)> = Vec::new(); // rect, alpha, radius, hovered
+        // rect, alpha, radius, hovered, and a note's colour fading down from the top (hidden notes)
+        let mut cards: Vec<(Rect, f32, f32, bool, Option<Rgb>)> = Vec::new();
         let mut shapes: Vec<(Shape, Rect, f32)> = Vec::new();
         let mut labels: Vec<Label> = Vec::new();
         let mut tiles: Vec<(Rect, Rgb, f32)> = Vec::new(); // icon tiles: rect, wash, alpha
@@ -1628,7 +1629,7 @@ impl Dock {
             if self.menu {
                 // The right-click menu is a single panel card.
                 let panel = (body.0, body.1 - MENU_PAD * s, body.2, body.3 + 2.0 * MENU_PAD * s);
-                cards.push((panel, 1.0, st.radius * s, false));
+                cards.push((panel, 1.0, st.radius * s, false, None));
                 self.menu_contents(fonts, &rows, body, scroll, &mut shapes, &mut labels, body_clip);
             } else {
                 for card in self.cards(&rows) {
@@ -1646,7 +1647,7 @@ impl Dock {
                                     let (tw, nw) = (label_width(&t), label_width(&c));
                                     let pw = tw + nw + 40.0 * s;
                                     let px = if self.right() { x + cw - pw } else { x };
-                                    cards.push(((px, y, pw, ch), a * 0.92, ch / 2.0, hovered));
+                                    cards.push(((px, y, pw, ch), a * 0.92, ch / 2.0, hovered, None));
                                     let ty = y + (ch - line_h(&t)) / 2.0;
                                     labels.push((
                                         t,
@@ -1663,7 +1664,7 @@ impl Dock {
                                     // Laid out like a note: a tile (holding the count), the name,
                                     // and a chevron where a note's extras go.
                                     let radius = (st.radius * s).min(ch / 2.0);
-                                    cards.push((card.rect, a, radius, hovered));
+                                    cards.push((card.rect, a, radius, hovered, None));
                                     let base = (ch - 2.0 * 6.0 * s).clamp(18.0 * s, (st.icon_size + 14.0) * s);
                                     let tile = base * (1.0 + 0.14 * card.lift);
                                     let tx = x + 6.0 * s + (base - tile) / 2.0;
@@ -1719,7 +1720,9 @@ impl Dock {
                         RowKind::Note(i) => {
                             let item = &self.items[*i];
                             let radius = (st.radius * s).min(ch / 2.0);
-                            cards.push((card.rect, a, radius, hovered));
+                            // A hidden note keeps its colour: the open note's cover gradient.
+                            let cover = item.hidden.then(|| theme::tint(item.tint, dark).1);
+                            cards.push((card.rect, a, radius, hovered, cover));
                             // Icon tile (the square in the sketch), swelling a little under the pointer.
                             let base = (ch - 2.0 * 6.0 * s).clamp(18.0 * s, (st.icon_size + 14.0) * s);
                             let tile = base * (1.0 + 0.14 * card.lift);
@@ -1777,14 +1780,14 @@ impl Dock {
                             }
                         }
                         RowKind::Empty(text) => {
-                            cards.push((card.rect, a, (st.radius * s).min(ch / 2.0), false));
+                            cards.push((card.rect, a, (st.radius * s).min(ch / 2.0), false, None));
                             let t = small_label(fonts, text, st.font_size * s, Weight::NORMAL);
                             let at = (x + 14.0 * s, y + (ch - line_h(&t)) / 2.0);
                             labels.push((t, pal.secondary.text((255.0 * a) as u8), at, body_clip));
                         }
                         RowKind::NewNote => {
                             // Quieter than a note: translucent, with a "+" where the icon goes.
-                            cards.push((card.rect, a * 0.82, (st.radius * s).min(ch / 2.0), hovered));
+                            cards.push((card.rect, a * 0.82, (st.radius * s).min(ch / 2.0), hovered, None));
                             let base = (ch - 2.0 * 6.0 * s).clamp(18.0 * s, (st.icon_size + 14.0) * s);
                             let tile = (x + 6.0 * s, y + (ch - base) / 2.0, base, base);
                             shapes.push((Shape::PlusTile, tile, a));
@@ -1796,7 +1799,7 @@ impl Dock {
                             let t = small_label(fonts, &format!("Search “{}”", self.query), 11.5 * s, Weight::SEMIBOLD);
                             let pw = label_width(&t) + 24.0 * s;
                             let px = if self.right() { x + cw - pw } else { x };
-                            cards.push(((px, y, pw, ch), a, ch / 2.0, false));
+                            cards.push(((px, y, pw, ch), a, ch / 2.0, false, None));
                             let at = (px + 12.0 * s, y + (ch - line_h(&t)) / 2.0);
                             labels.push((t, pal.selection.0.text((255.0 * a) as u8), at, body_clip));
                         }
@@ -1811,7 +1814,7 @@ impl Dock {
         self.surface.paint(width, height, 255, |data| {
             if expanded && surface::ALPHA && open > 0.0 {
                 let base = pal.shadow as f32 / 255.0 * open.min(1.0) * 0.8;
-                for &(r, a, radius, hovered) in &cards {
+                for &(r, a, radius, hovered, _) in &cards {
                     let k = if hovered { 1.4 } else { 1.0 };
                     let hole = (r.0 + 2.0 * s, r.1 + radius, r.2 - 4.0 * s, r.3 - 2.0 * radius);
                     let layers = [(9.0 * s, 4.0 * s, base * a * k), (1.5 * s, 1.0 * s, base * a * 0.6)];
@@ -1821,10 +1824,13 @@ impl Dock {
             {
                 let Some(mut pm) = PixmapMut::from_bytes(data, width, height) else { return };
                 if expanded && open > 0.0 {
-                    for &((x, y, cw, ch), a, radius, hovered) in &cards {
+                    for &((x, y, cw, ch), a, radius, hovered, cover) in &cards {
                         if let Some(p) = gfx::squircle(x, y, cw, ch, radius) {
                             let alpha = if hovered { 255.0 } else { st.opacity as f32 };
                             gfx::fill_path(&mut pm, &p, bg, (alpha * a) as u8);
+                            if let Some(wash) = cover {
+                                gfx::fill_path_gradient(&mut pm, &p, wash, (y, (alpha * a) as u8), (y + ch, 0));
+                            }
                             let (edge, ea) = if dark { (theme::WHITE, 26.0) } else { (pal.text, 20.0) };
                             gfx::stroke_path(&mut pm, &p, 1.0 * s, edge, (ea * a) as u8);
                         }
