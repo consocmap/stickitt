@@ -134,6 +134,8 @@ pub struct App {
     config_watch: Option<(Instant, Instant)>,
     /// `--shots`: rendering the README's pictures.
     shots: Option<Shots>,
+    /// The settings window's process, while it may be open.
+    settings_window: Option<std::process::Child>,
 }
 
 impl App {
@@ -176,6 +178,7 @@ impl App {
             dock_stale: true,
             config_watch: None,
             shots,
+            settings_window: None,
         };
         app.reload_model();
         app
@@ -485,7 +488,25 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        self.shared.config.open_in_editor();
+        // The settings window is this program started again with --settings. A window left open
+        // is closed first so the new one comes up in front (it saves every change as it goes).
+        if let Some(mut old) = self.settings_window.take() {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
+        let exe = std::env::current_exe();
+        let mut cmd = match &exe {
+            Ok(exe) => std::process::Command::new(exe),
+            Err(_) => std::process::Command::new("stickit"),
+        };
+        cmd.arg("--settings");
+        if let Some(path) = self.shared.config.path() {
+            cmd.arg("--config").arg(path);
+        }
+        match cmd.spawn() {
+            Ok(child) => self.settings_window = Some(child),
+            Err(_) => self.shared.config.open_in_editor(),
+        }
         let now = Instant::now();
         self.config_watch = Some((now + CONFIG_WATCH, now + CONFIG_POLL));
     }

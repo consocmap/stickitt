@@ -370,7 +370,7 @@ actions!(GlobalAction {
     ToggleNotes = "toggle_notes", "CmdOrCtrl+Alt+H", "Hide or show every note";
     OpenDock = "open_dock", "CmdOrCtrl+Alt+D", "Slide the dock out (or tuck it away)";
     NextProfile = "next_profile", "CmdOrCtrl+Alt+P", "Switch to the next profile";
-    OpenSettings = "open_settings", "CmdOrCtrl+Alt+Comma", "Open this settings file";
+    OpenSettings = "open_settings", "CmdOrCtrl+Alt+Comma", "Open the settings window";
 });
 
 actions!(NoteAction {
@@ -395,7 +395,7 @@ actions!(NoteAction {
     ZoomIn = "zoom_in", "CmdOrCtrl+Equal", "Larger text";
     ZoomOut = "zoom_out", "CmdOrCtrl+Minus", "Smaller text";
     ZoomReset = "zoom_reset", "CmdOrCtrl+0", "Reset text size";
-    OpenSettings = "open_settings", "CmdOrCtrl+Comma", "Open this settings file";
+    OpenSettings = "open_settings", "CmdOrCtrl+Comma", "Open the settings window";
 });
 
 /// A key chord matched against physical keys (layout-independent, like the global hotkeys).
@@ -442,9 +442,24 @@ pub struct Config {
 
 // ---- the settings table -----------------------------------------------------------------
 
+/// What kind of value a setting holds, so the settings window picks a fitting control.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Kind {
+    Num { lo: f32, hi: f32 },
+    Flag,
+    /// One of these words.
+    Choice(&'static [&'static str]),
+    /// `auto` or `#RRGGBB`.
+    Color,
+    /// cycle, random, a preset name or a hue.
+    NoteColor,
+    Text,
+}
+
 struct Setting {
     section: &'static str,
     key: &'static str,
+    kind: Kind,
     doc: &'static str,
     get: fn(&Config) -> String,
     set: fn(&mut Config, &str),
@@ -505,6 +520,7 @@ macro_rules! num_setting {
         Setting {
             section: $section,
             key: $key,
+            kind: Kind::Num { lo: $lo, hi: $hi },
             doc: $doc,
             get: |c| fmt(c.$($field).+),
             set: |c, v| {
@@ -521,6 +537,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes",
         key: "icon_position",
+
+        kind: Kind::Choice(&["bar", "page"]),
         doc: "bar = small, top-left in the top strip; page = large, above the text",
         get: |c| if c.notes.icon_position == IconPosition::Page { "page" } else { "bar" }.into(),
         set: |c, v| {
@@ -547,6 +565,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes",
         key: "default_color",
+
+        kind: Kind::NoteColor,
         doc: "colour of new notes: cycle (a different one each time), random, a name (lavender, cobalt...) or a hue 0-359",
         get: |c| match c.notes.default_color {
             NewNoteColor::Cycle => "cycle".into(),
@@ -580,6 +600,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes",
         key: "table_buttons",
+
+        kind: Kind::Flag,
         doc: "+ buttons on a table's edges to add a row or a column (its menus can too)",
         get: |c| c.notes.table_buttons.to_string(),
         set: |c, v| c.notes.table_buttons = flag(v).unwrap_or(c.notes.table_buttons),
@@ -610,6 +632,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes.compact",
         key: "show_progress",
+
+        kind: Kind::Flag,
         doc: "show 2/5 for notes with to-dos",
         get: |c| c.notes.compact.show_progress.to_string(),
         set: |c, v| c.notes.compact.show_progress = flag(v).unwrap_or(c.notes.compact.show_progress),
@@ -617,6 +641,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes.compact",
         key: "collapse_on_blur",
+
+        kind: Kind::Flag,
         doc: "an opened compact note folds back to one line when you click elsewhere",
         get: |c| c.notes.compact.collapse_on_blur.to_string(),
         set: |c, v| c.notes.compact.collapse_on_blur = flag(v).unwrap_or(c.notes.compact.collapse_on_blur),
@@ -625,6 +651,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes.fade",
         key: "enabled",
+
+        kind: Kind::Flag,
         doc: "fade notes you haven't used for a while",
         get: |c| c.notes.fade.enabled.to_string(),
         set: |c, v| c.notes.fade.enabled = flag(v).unwrap_or(c.notes.fade.enabled),
@@ -641,6 +669,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes.fade",
         key: "which",
+
+        kind: Kind::Choice(&["on_top", "all"]),
         doc: "on_top = only always-on-top notes, all = every note",
         get: |c| match c.notes.fade.which {
             FadeWhich::OnTop => "on_top".into(),
@@ -655,6 +685,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "notes.fade",
         key: "compact",
+
+        kind: Kind::Flag,
         doc: "compact (one-line) notes fade too",
         get: |c| c.notes.fade.compact.to_string(),
         set: |c, v| c.notes.fade.compact = flag(v).unwrap_or(c.notes.fade.compact),
@@ -663,6 +695,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock",
         key: "side",
+
+        kind: Kind::Choice(&["left", "right"]),
         doc: "left or right edge (dragging the dock also sets this)",
         get: |c| if c.dock.side == Side::Left { "left" } else { "right" }.into(),
         set: |c, v| c.dock.side = if v.eq_ignore_ascii_case("left") { Side::Left } else { Side::Right },
@@ -671,6 +705,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock",
         key: "open_delay_ms",
+
+        kind: Kind::Num { lo: 0.0, hi: 3000.0 },
         doc: "resting time on the edge before the dock opens",
         get: |c| c.dock.open_delay_ms.to_string(),
         set: |c, v| {
@@ -690,6 +726,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock.list",
         key: "opacity",
+
+        kind: Kind::Num { lo: 0.5, hi: 1.0 },
         doc: "0.5 - 1",
         get: |c| fraction(c.dock.opacity),
         set: |c, v| {
@@ -702,6 +740,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock.list",
         key: "list_headers",
+
+        kind: Kind::Choice(&["pill", "card", "caption", "line", "none"]),
         doc: "how lists are labelled when the dock shows more than one:\n\
               #     pill      a small floating label above each list (the default)\n\
               #     card      a card in the column, the size of a note, that slides out like one\n\
@@ -720,6 +760,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock.tab",
         key: "tab_color",
+
+        kind: Kind::Color,
         doc: "auto (follows light/dark) or a colour like #4F8EF7",
         get: |c| c.dock.tab_color.map_or("auto".into(), |Rgb(r, g, b)| format!("#{r:02X}{g:02X}{b:02X}")),
         set: |c, v| c.dock.tab_color = parse_hex(v),
@@ -729,6 +771,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "dock.tab",
         key: "tab_opacity",
+
+        kind: Kind::Num { lo: 0.0, hi: 1.0 },
         doc: "0 = invisible tab",
         get: |c| fraction(c.dock.tab_opacity),
         set: |c, v| {
@@ -757,6 +801,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "general",
         key: "theme",
+
+        kind: Kind::Choice(&["auto", "light", "dark"]),
         doc: "auto (follows the system), light or dark",
         get: |c| {
             use crate::theme::Appearance;
@@ -780,6 +826,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "general",
         key: "tray_icon",
+
+        kind: Kind::Flag,
         doc: "show an icon in the notification area with a quick menu",
         get: |c| c.general.tray_icon.to_string(),
         set: |c, v| c.general.tray_icon = flag(v).unwrap_or(c.general.tray_icon),
@@ -787,6 +835,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "general",
         key: "confirm_delete",
+
+        kind: Kind::Flag,
         doc: "\"Delete note\" in a note's menu asks for a second click",
         get: |c| c.general.confirm_delete.to_string(),
         set: |c, v| c.general.confirm_delete = flag(v).unwrap_or(c.general.confirm_delete),
@@ -804,6 +854,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "reminders",
         key: "times",
+
+        kind: Kind::Text,
         doc: "times offered for the chosen day (up to 6)",
         get: |c| c.reminders.times.iter().map(|t| crate::reminder::clock_setting(*t)).collect::<Vec<_>>().join(", "),
         set: |c, v| {
@@ -815,6 +867,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "reminders",
         key: "soon",
+
+        kind: Kind::Text,
         doc: "\"in ...\" choices, e.g. 10m, 1h, 1h30m (up to 4)",
         get: |c| c.reminders.soon.iter().map(|s| crate::reminder::duration_label(*s)).collect::<Vec<_>>().join(", "),
         set: |c, v| {
@@ -826,6 +880,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "reminders",
         key: "minute_step",
+
+        kind: Kind::Num { lo: 1.0, hi: 60.0 },
         doc: "minutes the -/+ buttons move the time by (1 - 60)",
         get: |c| c.reminders.minute_step.to_string(),
         set: |c, v| {
@@ -837,6 +893,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "reminders",
         key: "sound",
+
+        kind: Kind::Flag,
         doc: "play a short sound when a reminder rings",
         get: |c| c.reminders.sound.to_string(),
         set: |c, v| c.reminders.sound = flag(v).unwrap_or(c.reminders.sound),
@@ -845,6 +903,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "desktops",
         key: "per_desktop",
+
+        kind: Kind::Flag,
         doc: "notes stay on their own desktop; off, they show on all (Windows: one taskbar button)",
         get: |c| c.desktops.per_desktop.to_string(),
         set: |c, v| c.desktops.per_desktop = flag(v).unwrap_or(c.desktops.per_desktop),
@@ -852,6 +912,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "desktops",
         key: "dock_shows_other_desktops",
+
+        kind: Kind::Flag,
         doc: "the dock also lists notes from other desktops",
         get: |c| c.desktops.dock_shows_others.to_string(),
         set: |c, v| c.desktops.dock_shows_others = flag(v).unwrap_or(c.desktops.dock_shows_others),
@@ -859,6 +921,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         section: "desktops",
         key: "profile_per_desktop",
+
+        kind: Kind::Flag,
         doc: "each desktop remembers its own profile",
         get: |c| c.desktops.profile_per_desktop.to_string(),
         set: |c, v| c.desktops.profile_per_desktop = flag(v).unwrap_or(c.desktops.profile_per_desktop),
@@ -1050,6 +1114,60 @@ impl Config {
         out
     }
 
+    // ---- for the settings window ------------------------------------------------------
+
+    /// Sections in file order, with what each is about.
+    pub fn sections() -> &'static [(&'static str, &'static str)] {
+        SECTIONS
+    }
+
+    /// Every setting in `section`: (key, kind, doc, current value, default value).
+    pub fn settings_in(&self, section: &str) -> Vec<(&'static str, Kind, &'static str, String, String)> {
+        let defaults = Config::defaults();
+        SETTINGS
+            .iter()
+            .filter(|st| st.section == section)
+            .map(|st| (st.key, st.kind, st.doc, (st.get)(self), (st.get)(&defaults)))
+            .collect()
+    }
+
+    /// Sets one setting from text, as if it were written in the file (bad values are ignored).
+    pub fn set_value(&mut self, section: &str, key: &str, value: &str) {
+        if let Some(st) = SETTINGS.iter().find(|st| st.section == section && st.key == key) {
+            (st.set)(self, value);
+        }
+    }
+
+    /// Shortcuts as (key, doc, binding, default), global ones or in-note ones.
+    pub fn shortcuts(&self, global: bool) -> Vec<(&'static str, &'static str, String, &'static str)> {
+        if global {
+            self.global.iter().map(|(a, b)| (a.key(), a.doc(), b.clone(), a.default_binding())).collect()
+        } else {
+            self.note_bindings.iter().map(|(a, b)| (a.key(), a.doc(), b.clone(), a.default_binding())).collect()
+        }
+    }
+
+    /// Sets a shortcut if `binding` is empty (off) or a valid chord. Returns whether it was taken.
+    pub fn set_shortcut(&mut self, global: bool, key: &str, binding: &str) -> bool {
+        let binding = binding.trim();
+        if !binding.is_empty() && Chord::parse(binding).is_none() {
+            return false;
+        }
+        if global {
+            if let Some(slot) = self.global.iter_mut().find(|(a, _)| a.key() == key) {
+                slot.1 = binding.to_string();
+            }
+        } else if let Some(slot) = self.note_bindings.iter_mut().find(|(a, _)| a.key() == key) {
+            slot.1 = binding.to_string();
+        }
+        self.note = self.note_bindings.iter().filter_map(|(a, s)| Some((*a, Chord::parse(s)?))).collect();
+        true
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     pub fn note_action(&self, ev: &KeyEvent, mods: ModifiersState) -> Option<NoteAction> {
         self.note.iter().find(|(_, c)| c.matches(ev, mods)).map(|(a, _)| *a)
     }
@@ -1085,6 +1203,44 @@ fn parse_hex(value: &str) -> Option<Rgb> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_window_edits_survive_the_file() {
+        let mut cfg = Config::defaults();
+        cfg.set_value("dock.list", "width", "333");
+        cfg.set_value("general", "theme", "dark");
+        cfg.set_value("dock.tab", "tab_color", "#112233");
+        cfg.set_value("notes", "default_color", "cobalt");
+        assert!(cfg.set_shortcut(true, "new_note", "Cmd+Shift+J"));
+        assert!(cfg.set_shortcut(false, "bold", ""), "empty turns it off");
+        assert!(!cfg.set_shortcut(false, "italic", "Cmd+Banana"), "nonsense is refused");
+        let again = Config::parse(&cfg.render());
+        assert_eq!(again.dock.width, 333.0);
+        assert_eq!(again.general.theme, crate::theme::Appearance::Dark);
+        assert_eq!(again.dock.tab_color, Some(Rgb(0x11, 0x22, 0x33)));
+        assert_eq!(again.notes.default_color, NewNoteColor::Fixed(18));
+        assert_eq!(again.global.iter().find(|(a, _)| a.key() == "new_note").unwrap().1, "Cmd+Shift+J");
+        assert!(again.note.iter().all(|(a, _)| *a != NoteAction::Bold));
+        assert!(again.note.iter().any(|(a, _)| *a == NoteAction::Italic));
+    }
+
+    #[test]
+    fn every_setting_reports_a_value_its_kind_can_show() {
+        let cfg = Config::defaults();
+        for (section, _) in Config::sections() {
+            for (key, kind, _, value, _) in cfg.settings_in(section) {
+                match kind {
+                    Kind::Num { lo, hi } => {
+                        let v: f32 = value.parse().unwrap_or_else(|_| panic!("{key} = {value}"));
+                        assert!(v >= lo && v <= hi, "{key} = {value}");
+                    }
+                    Kind::Flag => assert!(value == "true" || value == "false", "{key}"),
+                    Kind::Choice(c) => assert!(c.contains(&value.as_str()), "{key} = {value}"),
+                    _ => {}
+                }
+            }
+        }
+    }
 
     #[test]
     fn defaults_roundtrip_through_the_generated_file() {

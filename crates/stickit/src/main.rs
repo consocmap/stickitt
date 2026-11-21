@@ -14,6 +14,7 @@ mod motion;
 mod note;
 mod popover;
 mod reminder;
+mod settings_ui;
 mod store;
 mod surface;
 mod table;
@@ -61,6 +62,7 @@ fn main() {
     let mut db_path: Option<PathBuf> = None;
     let mut config_path: Option<PathBuf> = None;
     let mut shots: Option<PathBuf> = None;
+    let mut settings = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--bench" => bench = args.next().and_then(|n| n.parse().ok()),
@@ -70,6 +72,8 @@ fn main() {
             "--config" => config_path = args.next().map(PathBuf::from),
             // Render the README's pictures into a folder (demo notes, light and dark), then quit.
             "--shots" => shots = args.next().map(PathBuf::from),
+            // The settings window (started by the app's "Settings...").
+            "--settings" => settings = true,
             other => eprintln!("stickit: ignoring unknown argument {other}"),
         }
     }
@@ -78,6 +82,10 @@ fn main() {
         bench = Some(0);
     }
     let data_dir = data_dir();
+    if settings {
+        settings_ui::run(config_path.unwrap_or_else(|| data_dir.join("stickit.ini")));
+        return;
+    }
     // A crash leaves its message in the data folder: a bundled app has no terminal to show it.
     log_panics(data_dir.join("stickit.log"));
     let db_path = db_path.unwrap_or_else(|| data_dir.join("stickit.db"));
