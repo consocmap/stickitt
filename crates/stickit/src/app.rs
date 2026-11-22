@@ -1090,6 +1090,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.config_watch = None;
             } else if now >= at {
                 self.reload_config();
+                // For as long as the settings window is open, however long that is.
+                let window_open = self.settings_window.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
+                let until = if window_open { now + CONFIG_WATCH } else { until };
                 self.config_watch = Some((until, now + CONFIG_POLL));
                 wake(now + CONFIG_POLL);
             } else {
