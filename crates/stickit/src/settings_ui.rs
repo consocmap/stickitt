@@ -14,11 +14,49 @@ const SAVE_AFTER: Duration = Duration::from_millis(200);
 /// How often the file is checked for changes made elsewhere (by hand, or the app itself).
 const CHECK_EVERY: Duration = Duration::from_secs(1);
 
+/// The first of these that exists is the window's text font: egui's own (Ubuntu Light) is too
+/// thin to read comfortably at these sizes. egui's fonts stay behind it for symbols such as ↺.
+const SYSTEM_FONTS: [(&str, u32); 4] = [
+    ("/System/Library/Fonts/SFNS.ttf", 0),
+    ("/System/Library/Fonts/HelveticaNeue.ttc", 0),
+    ("C:\\Windows\\Fonts\\segoeui.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
+];
+
+fn use_system_font(ctx: &egui::Context) {
+    let Some((bytes, index)) = SYSTEM_FONTS.iter().find_map(|(p, i)| std::fs::read(p).ok().map(|b| (b, *i))) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    let mut data = egui::FontData::from_owned(bytes);
+    data.index = index;
+    fonts.font_data.insert("system".to_owned(), std::sync::Arc::new(data));
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "system".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// The zoom (⌘+ / ⌘−) is kept in this file beside stickit.ini, so the window opens at it again.
+fn zoom_file(config: &std::path::Path) -> PathBuf {
+    config.with_file_name("settings-zoom")
+}
+
+fn saved_zoom(config: &std::path::Path) -> f32 {
+    std::fs::read_to_string(zoom_file(config))
+        .ok()
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|z| z.is_finite())
+        .map_or(1.0, |z| z.clamp(0.5, 3.0))
+}
+
 pub fn run(path: PathBuf) {
+    let zoom = saved_zoom(&path);
+    let app = SettingsApp::new(path);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Stick-itt Settings")
-            .with_inner_size([780.0, 600.0])
+            .with_inner_size([780.0 * zoom, 600.0 * zoom])
             .with_min_inner_size([560.0, 380.0]),
         ..Default::default()
     };
@@ -26,12 +64,31 @@ pub fn run(path: PathBuf) {
         "Stick-itt Settings",
         options,
         Box::new(move |cc| {
-            let mut style = (*cc.egui_ctx.style()).clone();
-            style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-            style.spacing.slider_width = 190.0;
-            style.spacing.button_padding = egui::vec2(8.0, 4.0);
-            cc.egui_ctx.set_style(style);
-            Ok(Box::new(SettingsApp::new(path)))
+            use_system_font(&cc.egui_ctx);
+            // Both themes, so switching between them keeps the sizes; text darker (or lighter)
+            // than egui's grey, for contrast.
+            cc.egui_ctx.all_styles_mut(|style| {
+                for (text, size) in [
+                    (egui::TextStyle::Body, 14.0),
+                    (egui::TextStyle::Button, 14.0),
+                    (egui::TextStyle::Small, 12.0),
+                    (egui::TextStyle::Heading, 21.0),
+                    (egui::TextStyle::Monospace, 13.0),
+                ] {
+                    if let Some(font) = style.text_styles.get_mut(&text) {
+                        font.size = size;
+                    }
+                }
+                style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+                style.spacing.slider_width = 190.0;
+                style.spacing.button_padding = egui::vec2(8.0, 4.0);
+                let dark = style.visuals.dark_mode;
+                style.visuals.widgets.noninteractive.fg_stroke.color =
+                    if dark { Color32::from_gray(215) } else { Color32::from_gray(25) };
+                style.visuals.weak_text_alpha = 0.72;
+            });
+            cc.egui_ctx.set_zoom_factor(app.zoom);
+            Ok(Box::new(app))
         }),
     );
 }
@@ -53,12 +110,17 @@ struct SettingsApp {
     recording: Option<String>,
     changed_at: Option<Instant>,
     checked_at: Instant,
+    /// The zoom last saved to `zoom_file`.
+    zoom: f32,
 }
 
 impl SettingsApp {
     fn new(path: PathBuf) -> Self {
+        let zoom = saved_zoom(&path);
+        let cfg = Config::load(Some(path));
         SettingsApp {
-            cfg: Config::load(Some(path)),
+            zoom,
+            cfg,
             page: Page::Section(0),
             drafts: HashMap::new(),
             invalid: HashMap::new(),
@@ -116,6 +178,23 @@ impl SettingsApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        // The footer first, from the bottom up; the pages scroll in what is left above it, so
+        // nothing overlaps when the window is short or zoomed in.
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.add_space(12.0);
+            if ui.button("Open stickit.ini").on_hover_text("Edit the settings file by hand").clicked() {
+                self.flush();
+                self.cfg.open_in_editor();
+            }
+            ui.label(RichText::new("Changes apply as you make them.").small().weak());
+            ui.add_space(4.0);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.pages(ui));
+            });
+        });
+    }
+
+    fn pages(&mut self, ui: &mut egui::Ui) {
         ui.add_space(14.0);
         ui.label(RichText::new("Stick-itt").heading().strong());
         ui.label(RichText::new("Settings").weak());
@@ -130,14 +209,6 @@ impl SettingsApp {
         if ui.add_sized([ui.available_width(), 26.0], egui::Button::selectable(shortcuts, "Shortcuts")).clicked() {
             self.page = Page::Shortcuts;
         }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            ui.add_space(12.0);
-            if ui.button("Open stickit.ini").on_hover_text("Edit the settings file by hand").clicked() {
-                self.flush();
-                self.cfg.open_in_editor();
-            }
-            ui.label(RichText::new("Changes apply as you make them.").small().weak());
-        });
     }
 
     fn section_page(&mut self, ui: &mut egui::Ui, index: usize) {
@@ -360,7 +431,7 @@ impl eframe::App for SettingsApp {
         self.follow_theme(ctx);
         egui::SidePanel::left("nav").resizable(false).exact_width(190.0).show(ctx, |ui| self.sidebar(ui));
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(10.0);
                 match self.page {
                     Page::Section(i) => self.section_page(ui, i),
@@ -370,6 +441,19 @@ impl eframe::App for SettingsApp {
             });
         });
         self.sync_file(ctx);
+        self.keep_zoom(ctx);
+    }
+}
+
+impl SettingsApp {
+    fn keep_zoom(&mut self, ctx: &egui::Context) {
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.zoom).abs() > 0.001 {
+            self.zoom = zoom;
+            if let Some(path) = self.cfg.path() {
+                let _ = std::fs::write(zoom_file(path), format!("{zoom:.2}\n"));
+            }
+        }
     }
 }
 
