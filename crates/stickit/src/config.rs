@@ -309,6 +309,8 @@ fn list<T>(value: &str, max: usize, parse: impl Fn(&str) -> Option<T>) -> Option
 pub struct GeneralSettings {
     /// An icon in the notification area (menu bar on macOS) with a quick menu.
     pub tray_icon: bool,
+    /// The app's icon in the macOS Dock and Cmd+Tab.
+    pub dock_icon: bool,
     /// "Delete note" in a note's menu needs a second click.
     pub confirm_delete: bool,
     /// Days a deleted note stays in the trash.
@@ -323,6 +325,7 @@ impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
             tray_icon: true,
+            dock_icon: true,
             confirm_delete: true,
             trash_days: 30.0,
             undo_seconds: 6.0,
@@ -831,6 +834,15 @@ const SETTINGS: &[Setting] = &[
         doc: "show an icon in the notification area with a quick menu",
         get: |c| c.general.tray_icon.to_string(),
         set: |c, v| c.general.tray_icon = flag(v).unwrap_or(c.general.tray_icon),
+    },
+    Setting {
+        section: "general",
+        key: "dock_icon",
+
+        kind: Kind::Flag,
+        doc: "show Stick-itt in the macOS Dock and Cmd+Tab (the edge dock stays either way)",
+        get: |c| c.general.dock_icon.to_string(),
+        set: |c, v| c.general.dock_icon = flag(v).unwrap_or(c.general.dock_icon),
     },
     Setting {
         section: "general",

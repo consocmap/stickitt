@@ -22,6 +22,10 @@
     <string>11.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
+    <!-- No Dock icon until the app asks for one (general.dock_icon). Without this, opening the
+         app again from Finder or Spotlight brings a hidden icon back. -->
+    <key>LSUIElement</key>
+    <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>

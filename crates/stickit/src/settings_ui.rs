@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 const SAVE_AFTER: Duration = Duration::from_millis(200);
 /// How often the file is checked for changes made elsewhere (by hand, or the app itself).
 const CHECK_EVERY: Duration = Duration::from_secs(1);
+/// macOS takes the focus away some moment after the Dock icon is hidden, and ignores asking for
+/// it back until then: so for this long, it is asked for again whenever it is found gone.
+const REFOCUS_FOR: Duration = Duration::from_millis(1200);
+const REFOCUS_EVERY: Duration = Duration::from_millis(150);
 
 /// The first of these that exists is the window's text font: egui's own (Ubuntu Light) is too
 /// thin to read comfortably at these sizes. egui's fonts stay behind it for symbols such as ↺.
@@ -53,7 +57,10 @@ fn saved_zoom(config: &std::path::Path) -> f32 {
 pub fn run(path: PathBuf) {
     let zoom = saved_zoom(&path);
     let app = SettingsApp::new(path);
+    let show_icon = app.dock_icon;
     let options = eframe::NativeOptions {
+        // This window is a process of its own, so it would get a Dock icon of its own.
+        event_loop_builder: Some(Box::new(move |builder| crate::dock_icon::at_launch(builder, show_icon))),
         viewport: egui::ViewportBuilder::default()
             .with_title("Stick-itt Settings")
             .with_inner_size([780.0 * zoom, 600.0 * zoom])
@@ -110,6 +117,10 @@ struct SettingsApp {
     recording: Option<String>,
     changed_at: Option<Instant>,
     checked_at: Instant,
+    /// Whether this process shows a Dock icon now.
+    dock_icon: bool,
+    /// Until when to take the focus back, after hiding the Dock icon.
+    refocus_until: Option<Instant>,
     /// The zoom last saved to `zoom_file`.
     zoom: f32,
 }
@@ -120,6 +131,8 @@ impl SettingsApp {
         let cfg = Config::load(Some(path));
         SettingsApp {
             zoom,
+            dock_icon: cfg.general.dock_icon,
+            refocus_until: None,
             cfg,
             page: Page::Section(0),
             drafts: HashMap::new(),
@@ -441,11 +454,31 @@ impl eframe::App for SettingsApp {
             });
         });
         self.sync_file(ctx);
+        self.follow_dock_icon(ctx);
         self.keep_zoom(ctx);
     }
 }
 
 impl SettingsApp {
+    fn follow_dock_icon(&mut self, ctx: &egui::Context) {
+        if self.dock_icon != self.cfg.general.dock_icon {
+            self.dock_icon = self.cfg.general.dock_icon;
+            let focused = ctx.input(|i| i.viewport().focused != Some(false));
+            self.refocus_until = (focused && !self.dock_icon).then(|| Instant::now() + REFOCUS_FOR);
+            crate::dock_icon::set(self.dock_icon);
+        }
+        if let Some(until) = self.refocus_until {
+            if ctx.input(|i| i.viewport().focused == Some(false)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            if Instant::now() >= until {
+                self.refocus_until = None;
+            } else {
+                ctx.request_repaint_after(REFOCUS_EVERY);
+            }
+        }
+    }
+
     fn keep_zoom(&mut self, ctx: &egui::Context) {
         let zoom = ctx.zoom_factor();
         if (zoom - self.zoom).abs() > 0.001 {

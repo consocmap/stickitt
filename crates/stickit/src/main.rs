@@ -5,6 +5,7 @@ mod chime;
 mod config;
 mod desktops;
 mod dock;
+mod dock_icon;
 mod editor;
 mod gfx;
 mod input;
@@ -110,7 +111,9 @@ fn main() {
         if bench.is_some() { config_path } else { Some(config_path.unwrap_or_else(|| data_dir.join("stickit.ini"))) };
     let config = config::Config::load(config_path);
 
-    let event_loop = EventLoop::<app::UserEvent>::with_user_event().build().expect("event loop");
+    let mut builder = EventLoop::<app::UserEvent>::with_user_event();
+    dock_icon::at_launch(&mut builder, config.general.dock_icon);
+    let event_loop = builder.build().expect("event loop");
     // Hotkeys, tray clicks, tray menu picks and relaunches arrive outside the window system;
     // forward them into the event loop.
     let send = |proxy: &Mutex<winit::event_loop::EventLoopProxy<app::UserEvent>>, e| {

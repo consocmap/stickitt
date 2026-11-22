@@ -513,8 +513,12 @@ impl App {
 
     /// Re-reads stickit.ini if it changed and applies it everywhere.
     fn reload_config(&mut self) {
+        let had_icon = self.shared.config.general.dock_icon;
         if !self.shared.config.reload_if_changed() {
             return;
+        }
+        if had_icon != self.shared.config.general.dock_icon {
+            crate::dock_icon::set(!had_icon);
         }
         crate::theme::set_appearance(self.shared.config.general.theme);
         let style = self.dock_style();
